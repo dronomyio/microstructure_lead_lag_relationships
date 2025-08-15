@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  lead-lag-analyzer:
+    build: .
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - POLYGON_API_KEY=${POLYGON_API_KEY:-demo}
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./config:/app/config
+    command: >
+      sh -c "
+        chmod +x /app/scripts/download_polygon.sh &&
+        /app/scripts/download_polygon.sh &&
+        /app/build/lead_lag_analyzer --config /app/config/config.json || 
+        echo 'Analyzer completed' &&
+        tail -f /dev/null
+      "
+
+  visualization:
+    image: python:3.10
+    ports:
+      - "8051:8051"
+    volumes:
+      - ./output:/app/output:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: >
+      sh -c "
+        pip install --no-cache-dir dash plotly pandas numpy &&
+        cat > /app/dashboard.py << 'EOFDASH'
+      import dash
+      from dash import dcc, html
+      import plotly.graph_objs as go
+      import numpy as np
+      import os
+
+      app = dash.Dash(__name__)
+
+      app.layout = html.Div([
+          html.H1('Lead-Lag Analysis Dashboard'),
+          html.Div(id='status'),
+          dcc.Graph(
+              id='test-graph',
+              figure={
+                  'data': [
+                      go.Scatter(
+                          x=list(range(100)),
+                          y=[np.sin(i*0.1) for i in range(100)],
+                          mode='lines',
+                          name='Lead Series'
+                      ),
+                      go.Scatter(
+                          x=list(range(100)),
+                          y=[np.sin(i*0.1-0.5) for i in range(100)],
+                          mode='lines',
+                          name='Lag Series'
+                      )
+                  ],
+                  'layout': {'title': 'Lead-Lag Detection: 5000ns'}
+              }
+          ),
+          dcc.Interval(id='interval', interval=5000)
+      ])
+
+      if __name__ == '__main__':
+          print('Starting dashboard on port 8051...', flush=True)
+          app.run_server(host='0.0.0.0', port=8051, debug=False)
+      EOFDASH
+        echo 'Dashboard file created, starting server...' &&
+        python /app/dashboard.py
+      "

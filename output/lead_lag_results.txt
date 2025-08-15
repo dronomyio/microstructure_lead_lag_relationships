@@ -1,0 +1,18 @@
+Lead-Lag Analysis Results
+==========================
+
+Test Configuration:
+  Known lag: 5000 ns
+  Max search range: ±10000 ns
+  Step size: 100 ns
+
+Result #1:
+  Correlation: 1
+  Detected lag: 5000 ns
+  Error from known lag: 0 ns
+
+Result #2:
+  Correlation: 1
+  Detected lag: -5000 ns
+  Error from known lag: 10000 ns
+

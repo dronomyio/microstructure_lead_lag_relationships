@@ -1,0 +1,25 @@
+# Build files
+build/
+*.o
+*.a
+*.so
+*.dylib
+
+# Generated data
+data/*.bin
+data/*.h5
+logs/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
