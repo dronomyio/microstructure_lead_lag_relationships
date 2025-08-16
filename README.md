@@ -531,3 +531,228 @@ Profit: $0.02 × volume
 
 The 500ns edge = Millions in profit over thousands of trades!
 ```
+
+# Theory
+
+Got it—here’s a tight, publish-ready rewrite of your explainer first, then a deeper dive with concrete examples, math, and GPU/FFT implementation tips.
+
+# Drop-in Rewrite (clean, concise)
+
+**Lead–Lag Intuition (HFT context)**
+When the same instrument trades on multiple venues, price discovery often happens on one first (“leader”) and then propagates to others (“laggards”) after a small delay (µs–ns). If you can identify a stable delay, you can read the move on the leader and act on the laggard before it updates.
+
+**1) Cross-Correlation across lags**
+Cross-correlation asks: *how similar is series B to a time-shifted version of series A?*
+Scan lags $\tau$ over a window (e.g., $[-1\text{ ms}, +1\text{ ms}]$ at 100 ns steps). The lag $\tau^\*$ with the highest (normalized) correlation is your estimated propagation delay:
+
+* $\tau^\*>0$: A leads B by $\tau^\*$.
+* $\tau^\*<0$: B leads A by $|\tau^\*|$.
+
+**2) FFT-based correlation (cuFFT)**
+Brute-force correlation at many lags is $O(n^2)$. Using FFT:
+correlation ≈ IFFT( FFT(A) · conj(FFT(B)) ) → $O(n\log n)$.
+This gives *all lags at once* and is fast enough for million-tick windows on GPU.
+
+**3) Information Ratio (IR)**
+High correlation isn’t automatically tradable. IR measures *signal quality*:
+
+$$
+\text{IR} = \frac{\mathbb{E}[r]}{\sigma(r)}
+$$
+
+Use IR to tell persistent edges from noisy coincidences (and to see if an edge survives fees/slippage).
+
+**4) Sharpe Ratio**
+Sharpe adds a risk-free baseline and annualization:
+
+$$
+\text{Sharpe} = \frac{\mathbb{E}[r]-r_f}{\sigma(r)} \times \sqrt{\text{periods per year}}
+$$
+
+It answers: *is this worth capital vs. T-bills and other strategies?* Use Sharpe for allocation; use IR for signal vetting.
+
+**Putting it together**
+
+1. Find $\tau^\*$ via cross-corr (FFT).
+2. Convert the lag edge into a *predictive trade rule* (e.g., buy B when A upticks and B hasn’t yet).
+3. Measure realized returns → compute IR/Sharpe after costs.
+4. Trade only if the microsecond window exceeds your total latency budget and the IR/Sharpe are robust out-of-sample.
+
+---
+
+# Deeper Dive (intuition, math, examples, GPU code patterns)
+
+## 1) What “lead–lag” really captures
+
+At microsecond scales: feed latencies, venue distance, matching-engine queues, and router paths create tiny but systematic delays. You’re not forecasting *direction* from scratch—you’re *relaying* discovered information from A to B before most of the world sees it on B.
+
+**ASCII timeline**
+
+```
+A (leader):  ---- price jump ----->│
+B (laggard): --------- same jump ------->│
+                     <----- τ ----->
+Trade on B within τ, before it updates.
+```
+
+## 2) Cross-correlation that actually works in production
+
+**Prep matters more than the formula:**
+
+* Align clocks (PTP/GPS), or use exchange sequence numbers if provided.
+* Use a common sampling grid (e.g., 100 ns or 1 µs bars of mid-price deltas) or event-sync (last-tick-carry-forward).
+* Detrend and standardize: $x_t \leftarrow (x_t - \bar{x})/\sigma$.
+* Winsorize extreme deltas to tame outliers.
+
+**Definition (normalized):**
+
+$$
+\rho_{AB}(\tau)=\frac{\sum_t x_A(t)\,x_B(t+\tau)}{\sqrt{\sum_t x_A(t)^2}\sqrt{\sum_t x_B(t)^2}}
+$$
+
+The peak $\tau^\*=\arg\max_\tau \rho_{AB}(\tau)$ is your estimated delay.
+
+**Sign convention:** if the *best* correlation occurs at $+\;500\text{ ns}$, A leads B by 500 ns.
+
+**Multiple lags:** scanning a fine grid is crucial; tiny steps (50–200 ns) often change the winner.
+
+## 3) FFT-based correlation on GPU (cuFFT/CuPy pattern)
+
+**Key points**
+
+* Zero-pad to at least $n+m-1$ to avoid circular wrap.
+* Use real-to-complex (R2C) FFTs for speed.
+* Multiply $\mathcal{F}(A) \cdot \overline{\mathcal{F}(B)}$, then IFFT.
+* Normalize by $\|A\|\|B\|$ to get correlation, not raw convolution.
+
+**Pseudocode (CuPy, mirrors cuFFT logic)**
+
+```python
+import cupy as cp
+
+def xcorr_normalized(A, B):
+    n = len(A) + len(B) - 1
+    N = 1 << (n-1).bit_length()  # next pow2
+    A0 = (A - A.mean()) / (A.std() + 1e-12)
+    B0 = (B - B.mean()) / (B.std() + 1e-12)
+    FA = cp.fft.rfft(cp.pad(A0, (0, N-len(A0))))
+    FB = cp.fft.rfft(cp.pad(B0, (0, N-len(B0))))
+    corr = cp.fft.irfft(FA * cp.conj(FB), n=N)
+    corr = corr[:n]  # valid part
+    # shift so that lags run from -(len(B)-1) .. +(len(A)-1)
+    corr = cp.concatenate([corr[-(len(B)-1):], corr[:len(A)]])
+    # already normalized by std of A,B; optional scale to [-1,1] if needed
+    return corr
+```
+
+**Lag grid mapping:** the index at maximum gives $\tau^\*$ via `lag_index * dt - (len(B)-1)*dt`.
+
+**Complexity:** $O(n\log n)$ vs $O(n^2)$ brute force → orders-of-magnitude faster at 10⁶ points.
+
+## 4) From correlation to *tradable* edge
+
+Correlation peak says “A’s moves show up in B after $\tau^\*$.” To monetize, turn it into a *predictive regression*:
+
+$$
+\Delta p_B(t) = \beta\,\Delta p_A(t-\tau^\*) + \varepsilon_t
+$$
+
+If $\beta>0$, an uptick on A predicts an uptick on B after $\tau^\*$.
+
+**Expected fill-to-fill edge (toy):**
+
+$$
+\mathbb{E}[\text{Edge}] \approx \beta\cdot \mathbb{E}[|\Delta p_A|] - \text{fees} - \text{slippage} - \text{adverse selection}
+$$
+
+Only trade when $\mathbb{E}[\text{Edge}] > 0$ by a safety margin.
+
+**Latency budget (must be < lag):**
+
+$$
+L_{\text{total}} = L_{\text{feed}}+L_{\text{decode}}+L_{\text{compute}}+L_{\text{route}}+L_{\text{venue}}+\text{jitter}
+$$
+
+Require $L_{\text{total}} \ll \tau^\*$ (and remember your competitors are racing you).
+
+**Concrete micro example**
+
+* Found $\tau^\*=750\text{ ns}$, $\beta=0.65$.
+* Median $|\Delta p_A|$ (1-tick) = \$0.01.
+* Fees+slippage+AS ≈ \$0.006/share.
+* Edge/share ≈ $0.65\times 0.01 - 0.006 = 0.0005$ (\$0.0005).
+  Scale by fills/second and fill probability to estimate P\&L, then compute IR/Sharpe.
+
+## 5) Information Ratio vs. Sharpe (and how to use them)
+
+**IR (signal quality):**
+
+$$
+\text{IR}=\frac{\bar{r}}{\sigma_r}
+$$
+
+* Use on *strategy return series* (after costs) to judge persistence/cleanliness.
+* Good quick filter: IR < 0.5 (usually not worth it); IR > 1 (promising); IR > 2 (rare/great).
+
+**Sharpe (capital allocation):**
+
+$$
+\text{Sharpe}=\frac{\bar{r}-r_f}{\sigma_r}\times \sqrt{\text{periods/yr}}
+$$
+
+* Compare across strategies and vs. cash; size risk budgets with it.
+* A strategy with modest IR but high capacity can beat a high-IR, low-capacity one.
+
+**Mini example (per-trade returns, then annualized)**
+
+* Mean per-trade $= 2.5$ bps, stdev $= 2.0$ bps → IR $= 1.25$.
+* With 200k trades/day and weak correlation across trades, daily Sharpe can be estimated by aggregating to daily returns and annualizing (don’t annualize tick-level Sharpe directly).
+
+## 6) Statistical hygiene (avoid chasing ghosts)
+
+* **Multiple-testing control:** scanning thousands of lags/venues → apply Bonferroni/Holm or, better, *block bootstrap* to get a distribution of peak correlations.
+* **Stability checks:** rolling windows by time-of-day; split by volatility regimes; holdout days.
+* **Asynchronous trading:** if not on a common grid, Hayashi–Yoshida-style estimators help (Epps effect can depress correlation if you oversample).
+* **Zero-padding + windowing:** avoid circular convolution; optional taper to reduce edge artifacts.
+* **Clock sanity:** even 1–2 µs skew can flip “leader” labels.
+
+## 7) Frequency-domain angle (phase → delay)
+
+Coherence pinpoints *which frequencies* carry the lead–lag; the *phase slope* gives delay:
+
+$$
+\tau \approx -\frac{1}{2\pi}\frac{d\phi(f)}{df}
+$$
+
+If delay is frequency-dependent (microstructure!), consider a band-limited trade trigger (e.g., emphasize 1–10 kHz components that actually move quotes).
+
+## 8) Practical pipeline you can ship
+
+1. **Preprocess**: align, resample (or last-tick carry), standardize, winsorize.
+2. **Scan lags**: FFT-xcorr on GPU; get $\tau^\*$, peak value, width.
+3. **Validate**: bootstrapped p-values, rolling stability, venue-pair matrix.
+4. **Translate to rule**: $\Delta p_A(t-\tau^\*) \to$ action on B; enforce *latency budget*.
+5. **Simulate with costs**: queue position, partial fills, cancel/replace.
+6. **Score**: IR/Sharpe on out-of-sample; capacity test; stress in news spikes.
+7. **Deploy**: monitors for lag drift, auto-disable on regime breaks; daily re-estimation.
+
+## 9) “Why not just trade the biggest correlation?”
+
+Because the *biggest* peak might:
+
+* Come from an illiquid venue (no fills),
+* Vanish during volatility (edge decays just when you want it), or
+* Be a clock artifact (mis-sync).
+  IR/Sharpe on realistic fills (not midpoint fantasy) is the final arbiter.
+
+---
+
+## Quick reference thresholds (rule-of-thumb)
+
+* **Peak xcorr** > 0.6 and stable across days/time-buckets → investigate.
+* **Lag window** $>$ 3× your *95th-percentile* end-to-end latency → executable.
+* **IR** > 1.0 out-of-sample (post-cost) → candidates.
+* **Sharpe (annualized)** > 1.5 with real capacity → allocate.
+
+If you want, I can turn this into a small **GPU notebook** (CuPy) that: (a) estimates $\tau^\*$, (b) builds the predictive rule, and (c) reports IR/Sharpe with a cost model using your own nanosecond A/B streams.
+
