@@ -127,7 +127,7 @@ Exchange B:    ──╱╲──╱╲────╱╲──╱╲
 
 PEARSON CORRELATION FORMULA VISUALLY:
 ══════════════════════════════════════
-
+```
 Step 1: Center the data (remove means)
     
     Price A                         Centered A
@@ -137,6 +137,7 @@ Step 1: Center the data (remove means)
     101     ●   ●   ●   → Mean=102  -1     ●   ●
     100         ●                   -2         ●
         t1  t2  t3  t4  t5              t1  t2  t3  t4  t5
+```
 
 Step 2: Multiply corresponding points
     
@@ -156,7 +157,7 @@ Step 3: Normalize by standard deviations
 ## 3. Testing Multiple Lags - Finding the Peak
 CORRELATION AT DIFFERENT LAGS:
 ═══════════════════════════════
-
+```
 We slide Series B relative to Series A and compute correlation:
 
 Lag = -1000ns (B leads A by 1000ns):
@@ -213,13 +214,13 @@ Corr    │   ╱      ╲
         -1000  -500  0  +500  +1000
         
                    Lag (ns)
-
+```
 
   ## 4. The SIMD Parallel Computation
 
   SIMD PROCESSES 8 CORRELATIONS AT ONCE:
 ════════════════════════════════════════
-
+```
 Traditional (Sequential):
 
 Lag₁: ●────────────────> Corr₁
@@ -231,7 +232,8 @@ Lag₂:   ●────────────────> Corr₂
 Lag₃:     ●────────────────> Corr₃
 
 
-...
+```
+```
 
 Time: ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 
@@ -256,13 +258,13 @@ Core 0:  [Lag₁-₈]   ──> [Corr₁-₈]
 Core 1:  [Lag₉-₁₆]  ──> [Corr₉-₁₆]
 
 
-...
+
 
 Core 47: [Lag₃₇₇-₃₈₄] ──> [Corr₃₇₇-₃₈₄]
 
 
 Time: ▓ (384x faster!)
-
+```
 
 ## 5. Information Ratio - Signal Quality Visualization
 
@@ -272,7 +274,7 @@ INFORMATION RATIO INTUITION:
 
 ════════════════════════════
 
-
+```
 
 High IR (Good Signal):          Low IR (Noisy Signal):
 
@@ -293,12 +295,12 @@ Correlations across lags:       Correlations across lags:
     
     
     RELIABLE for trading!          RISKY for trading!
-
+```
 ## 6. The Complete Pipeline Visualization
 
 FULL LEAD-LAG DETECTION PIPELINE:
 ══════════════════════════════════
-
+```
 1. INPUT: Raw Price Streams
    
    NASDAQ: ═══╱╲═══╱╲═══╱═══╲═══
@@ -329,7 +331,7 @@ FULL LEAD-LAG DETECTION PIPELINE:
         0.6│●             ●
            └────────────────
            -1μs    0    +1μs
-
+```
 5. FIND MAXIMUM
    max_correlation = 0.99
    optimal_lag = +500ns
@@ -346,7 +348,7 @@ FULL LEAD-LAG DETECTION PIPELINE:
 
 ARBITRAGE OPPORTUNITY WINDOW:
 ══════════════════════════════
-
+```
 Price Movement Detection:
                                     
 NASDAQ  │     ╱╲    Your algo detects
@@ -372,7 +374,7 @@ price   │           ╱  ╲  at T+500ns
                 = $0.02 per share
                 × 10,000 shares
                 = $200 per trade
-
+```
 ## 8. Visual Summary - The Edge
 WITHOUT LEAD-LAG DETECTION:
 ═══════════════════════════
