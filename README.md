@@ -160,28 +160,43 @@ CORRELATION AT DIFFERENT LAGS:
 We slide Series B relative to Series A and compute correlation:
 
 Lag = -1000ns (B leads A by 1000ns):
+
     A: ████████████████
+    
     B: ██████████████████
+    
        Poor alignment → Correlation = 0.2
 
 Lag = -500ns:
+
     A: ████████████████
+    
     B:   ████████████████
+    
        Better alignment → Correlation = 0.5
 
 Lag = 0ns (No lag):
+
     A: ████████████████
+    
     B: ████████████████
+    
        Good alignment → Correlation = 0.7
 
 Lag = +500ns (A leads B by 500ns):
+
     A: ████████████████
+    
     B:     ████████████████
+    
        BEST alignment → Correlation = 0.99 ← PEAK!
 
 Lag = +1000ns:
+
     A: ████████████████
+    
     B:       ████████████████
+    
        Alignment degrading → Correlation = 0.6
 
 CORRELATION vs LAG GRAPH:
@@ -203,10 +218,15 @@ Corr    │   ╱      ╲
 ════════════════════════════════════════
 
 Traditional (Sequential):
+
 Lag₁: ●────────────────> Corr₁
+
 Lag₂:   ●────────────────> Corr₂
+
 Lag₃:     ●────────────────> Corr₃
+
 ...
+
 Time: ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 
 AVX2 SIMD (8 Parallel):
@@ -214,18 +234,27 @@ AVX2 SIMD (8 Parallel):
 │ Lag₁ Lag₂ ... Lag₈  │ ──> [Corr₁|Corr₂|...|Corr₈]
 └─────────────────────┘
 All 8 computed simultaneously!
+
 Time: ▓▓▓ (8x faster!)
 
 With 48 Cores + OpenMP:
+
 Core 0:  [Lag₁-₈]   ──> [Corr₁-₈]
+
 Core 1:  [Lag₉-₁₆]  ──> [Corr₉-₁₆]
+
 ...
+
 Core 47: [Lag₃₇₇-₃₈₄] ──> [Corr₃₇₇-₃₈₄]
+
 Time: ▓ (384x faster!)
 
 ## 5. Information Ratio - Signal Quality Visualization
+
 INFORMATION RATIO INTUITION:
+
 ════════════════════════════
+
 
 High IR (Good Signal):          Low IR (Noisy Signal):
 Correlations across lags:       Correlations across lags:
@@ -248,11 +277,13 @@ FULL LEAD-LAG DETECTION PIPELINE:
 ══════════════════════════════════
 
 1. INPUT: Raw Price Streams
+   
    NASDAQ: ═══╱╲═══╱╲═══╱═══╲═══
+   
    NYSE:   ═══╱╲═══╱╲═══╱═══╲═══
            Time →
 
-2. SIMD CORRELATION COMPUTATION
+3. SIMD CORRELATION COMPUTATION
    ┌─────────────────────────────┐
    │  For each lag (-1μs to +1μs)│
    │  ┌───────────────────┐      │
@@ -267,7 +298,7 @@ FULL LEAD-LAG DETECTION PIPELINE:
    │  Pearson Formula → Corr[lag]│
    └─────────────────────────────┘
 
-3. CORRELATION CURVE
+4. CORRELATION CURVE
         1.0┤     ●●●●●
            │   ●●     ●●  ← Peak = 0.99
         0.8│  ●         ●    at +500ns
@@ -276,15 +307,15 @@ FULL LEAD-LAG DETECTION PIPELINE:
            └────────────────
            -1μs    0    +1μs
 
-4. FIND MAXIMUM
+5. FIND MAXIMUM
    max_correlation = 0.99
    optimal_lag = +500ns
    
-5. CALCULATE METRICS
+6. CALCULATE METRICS
    Information Ratio = mean/stddev = 8.5
    Sharpe Ratio = IR × √252 = 135
    
-6. TRADING SIGNAL
+7. TRADING SIGNAL
     NASDAQ leads NYSE by 500ns
     Signal quality: EXCELLENT (IR > 2)
     Action: Buy NYSE when NASDAQ rises
