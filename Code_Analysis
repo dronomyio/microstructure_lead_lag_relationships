@@ -263,3 +263,234 @@ posix_memalign MODIFIES ptr through its address:
 ```
 
 This is why `posix_memalign` needs the ADDRESS of your pointer (`&ptr`) - so it can modify what ptr points to!
+
+Excellent question! Let me visualize how alignment works with 1000 floats and explain the relationship between data size and alignment boundaries:
+
+## **Alignment vs Data Size - 1000 Floats Example**
+
+### **1. Understanding the Difference**
+
+```
+ALIGNMENT ≠ TOTAL SIZE
+
+Alignment = Starting address boundary (16, 32, or 64 bytes)
+Size = Total memory needed (1000 floats × 4 = 4000 bytes)
+```
+
+### **2. Allocating 1000 Floats with 64-byte Alignment**
+
+```cpp
+float* data = aligned_alloc<float>(1000, 64);
+                                    ↑     ↑
+                          1000 floats    64-byte alignment
+                          = 4000 bytes   (NOT the size!)
+```
+
+**What happens in memory:**
+
+```
+MEMORY ALLOCATION VISUALIZATION:
+
+Request: 4000 bytes, aligned to 64-byte boundary
+
+Step 1: Find address divisible by 64
+────────────────────────────────────
+Address     Hex        Divisible by 64?
+0x103F      4159       4159 ÷ 64 = 64.98...  ✗
+0x1040      4160       4160 ÷ 64 = 65.0      ✓ (65 × 64)
+0x1041      4161       4161 ÷ 64 = 65.01...  ✗
+...
+0x1080      4224       4224 ÷ 64 = 66.0      ✓ (66 × 64)
+
+Step 2: Allocate 4000 bytes starting at aligned address
+────────────────────────────────────────────────────────
+
+START ADDRESS: 0x1040 (aligned to 64)
+END ADDRESS:   0x1040 + 4000 = 0x1FE0
+
+┌─────────────────────────────────────────────────────────────┐
+│                     Total: 4000 bytes                       │
+├──────────────┬──────────────┬──────────────┬──────────────┤
+│  First       │  Second      │     ...      │  Last        │
+│  64 bytes    │  64 bytes    │              │  32 bytes    │
+├──────────────┼──────────────┼──────────────┼──────────────┤
+│ floats[0-15] │floats[16-31] │     ...      │floats[984-999]│
+└──────────────┴──────────────┴──────────────┴──────────────┘
+↑              ↑              ↑              ↑
+0x1040         0x1080         0x10C0         0x1FE0
+(aligned)      (aligned)      (aligned)      (end)
+
+Cache lines:   [    1    ]    [    2    ]    [   62.5   ]
+```
+
+### **3. Why 64-byte Alignment for 4000 bytes?**
+
+```
+THE ALIGNMENT AFFECTS THE START ADDRESS, NOT THE TOTAL SIZE!
+
+┌────────────────────────────────────────────────────────────┐
+│                        4000 bytes total                    │
+│  ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬───┐ │
+│  │ 64 │ 64 │ 64 │ 64 │ 64 │ 64 │ 64 │ 64 │ 64 │... │32 │ │
+│  └────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴───┘ │
+│  ↑                                                         │
+│  Must start at address divisible by 64                    │
+│  (0x1040, 0x1080, 0x10C0, etc.)                          │
+└────────────────────────────────────────────────────────────┘
+
+Benefits:
+✓ First SIMD load is aligned
+✓ All subsequent 64-byte chunks are aligned
+✓ Cache line efficient
+```
+
+### **4. How SIMD Processes 1000 Floats**
+
+```cpp
+// Processing loop with AVX-512 (16 floats per iteration)
+for (int i = 0; i < 1000; i += 16) {
+    __m512 vec = _mm512_load_ps(&data[i]);
+    // Process 16 floats at once
+}
+```
+
+**Memory Access Pattern:**
+
+```
+Iteration 1: Load floats[0-15]   from 0x1040 (ALIGNED ✓)
+Iteration 2: Load floats[16-31]  from 0x1080 (ALIGNED ✓)
+Iteration 3: Load floats[32-47]  from 0x10C0 (ALIGNED ✓)
+...
+Iteration 62: Load floats[976-991] from 0x1FA0 (ALIGNED ✓)
+Iteration 63: Load floats[992-999] from 0x1FE0 (PARTIAL)
+
+Each 64-byte load:
+┌────────────────────────────────────────────────────────┐
+│            Single AVX-512 Load (64 bytes)              │
+├──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──┐     │
+│f0│f1│f2│f3│f4│f5│f6│f7│f8│f9│fA│fB│fC│fD│fE│fF│     │
+└──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴──┘     │
+↑                                                 ↑      │
+Aligned start                            Aligned end    │
+└────────────────────────────────────────────────────────┘
+```
+
+### **5. Different Alignment Boundaries Compared**
+
+```
+SAME DATA (1000 floats = 4000 bytes), DIFFERENT ALIGNMENTS:
+
+16-byte alignment (SSE):
+─────────────────────────
+Start: 0x1000, 0x1010, 0x1020, 0x1030... (any multiple of 16)
+┌────┬────┬────┬────┬────────────────┐
+│ 16 │ 16 │ 16 │ 16 │... (250 chunks)│
+└────┴────┴────┴────┴────────────────┘
+ SSE  SSE  SSE  SSE
+
+32-byte alignment (AVX2):
+──────────────────────────
+Start: 0x1000, 0x1020, 0x1040, 0x1060... (any multiple of 32)
+┌─────────┬─────────┬─────────────────┐
+│   32    │   32    │... (125 chunks)│
+└─────────┴─────────┴─────────────────┘
+   AVX2      AVX2
+
+64-byte alignment (AVX-512):
+─────────────────────────────
+Start: 0x1000, 0x1040, 0x1080, 0x10C0... (any multiple of 64)
+┌──────────────┬──────────────┬───────┐
+│      64      │      64      │...(63)│
+└──────────────┴──────────────┴───────┘
+    AVX-512        AVX-512
+```
+
+### **6. Memory Waste vs Performance Trade-off**
+
+```
+POTENTIAL "WASTE" WITH ALIGNMENT:
+
+Scenario: System has free memory at 0x1033
+          But we need 64-byte alignment
+
+┌──────────────────────────────────────────────┐
+│ Memory before allocation:                    │
+│                                              │
+│ 0x1000    0x1033    0x1040                  │
+│    ↓         ↓         ↓                    │
+│ [USED...][FREE>>>>>>>>>>>>>>>>]              │
+│           ↑         ↑                        │
+│           13 bytes  │                        │
+│           "wasted"  Actual allocation starts │
+└──────────────────────────────────────────────┘
+
+Waste: 0x1040 - 0x1033 = 13 bytes unused
+But: Gain 2-4x performance on SIMD operations!
+```
+
+### **7. Real Example: Processing Loop**
+
+```cpp
+// Allocate 1000 floats with 64-byte alignment
+float* prices = aligned_alloc<float>(1000, 64);
+
+// Fill with data
+for (int i = 0; i < 1000; i++) {
+    prices[i] = 100.0f + i * 0.01f;
+}
+
+// SIMD Processing with different instruction sets
+#ifdef __AVX512F__
+    // Process 16 at a time (64 bytes)
+    for (int i = 0; i <= 1000 - 16; i += 16) {
+        __m512 vec = _mm512_load_ps(&prices[i]);  // Aligned load
+        // Each load starts at 64-byte boundary
+        // i=0:   loads from 0x1040 (aligned)
+        // i=16:  loads from 0x1080 (aligned)
+        // i=32:  loads from 0x10C0 (aligned)
+    }
+#elif defined(__AVX2__)
+    // Process 8 at a time (32 bytes)
+    for (int i = 0; i <= 1000 - 8; i += 8) {
+        __m256 vec = _mm256_load_ps(&prices[i]);  // Aligned load
+        // i=0:   loads from 0x1040 (aligned to 64, thus also to 32)
+        // i=8:   loads from 0x1060 (32-byte aligned)
+        // i=16:  loads from 0x1080 (aligned)
+    }
+#endif
+```
+
+### **8. Alignment Math for 1000 Floats**
+
+```
+Total Size: 1000 × 4 = 4000 bytes
+
+How many cache lines (64 bytes each)?
+4000 ÷ 64 = 62.5 cache lines
+
+Memory layout:
+┌───────────────────────────────────────────────────┐
+│ 62 complete cache lines + 32 bytes partial       │
+├───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬────┤
+│CL1│CL2│CL3│CL4│...│CL60│CL61│CL62│CL63│         │
+│64B│64B│64B│64B│...│64B │64B │64B │32B │         │
+└───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴────┘
+↑                                           ↑
+0x1040 (start, aligned)            0x1FE0 (end)
+
+Each cache line holds: 64 ÷ 4 = 16 floats
+Total: 62 × 16 + 8 = 992 + 8 = 1000 floats ✓
+```
+
+### **Key Takeaways**
+
+1. **Alignment ≠ Size**: 64-byte alignment means START ADDRESS is divisible by 64, not that you're allocating only 64 bytes
+
+2. **Any size works**: You can allocate 1 byte or 1GB with 64-byte alignment - it just affects WHERE it starts
+
+3. **Performance benefit**: Even for 4000 bytes, starting at aligned address means:
+   - First SIMD operation is fast
+   - Most subsequent operations hit aligned addresses
+   - Better cache utilization
+
+4. **No reallocation needed**: The 64-byte alignment persists for the entire 4000-byte block - you don't need to realign every 64 bytes!
