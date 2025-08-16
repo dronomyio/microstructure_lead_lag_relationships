@@ -376,6 +376,7 @@ price   │           ╱  ╲  at T+500ns
                 = $200 per trade
 ```
 ## 8. Visual Summary - The Edge
+```
 WITHOUT LEAD-LAG DETECTION:
 ═══════════════════════════
 Trader sees prices:
@@ -395,3 +396,4 @@ T+600ns: Sell at $100.02
 Profit: $0.02 × volume
 
 The 500ns edge = Millions in profit over thousands of trades!
+```
