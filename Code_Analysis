@@ -641,6 +641,60 @@ lag_idx = 10:  lag_ns = -1000 + 10*100 = 0ns      lag_samples = 0/100 = 0
 lag_idx = 20:  lag_ns = -1000 + 20*100 = +1000ns  lag_samples = 1000/100 = +10
 
 Visual of what each lag means:
+## Meaning of LAG
+You're absolutely right! The **time difference** is the crucial missing piece. Let me rewrite the explanation with this key information included.
+
+## Cross-Correlation with Time Alignment
+
+### Key Information:
+- **Sampling Rate**: 10 MHz (one sample every 100ns)
+- **Index difference of 5 samples** = **500ns time difference**
+- **This time relationship is what makes lag meaningful!**
+
+### Complete Example:
+
+**Original signals:**
+```
+Time (ns):    0   100  200  300  400  500  600  700  800  900 1000 1100 1200
+Index:        0    1    2    3    4    5    6    7    8    9   10   11   12
+Series1:    [a0][a1][a2][a3][a4][a5][a6][a7][a8][a9][a10][a11][a12]
+Series2:    [b0][b1][b2][b3][b4][b5][b6][b7][b8][b9][b10][b11][b12]
+```
+
+### When we test lag = +5 samples (Series1 leads by 5):
+
+**What this means in time:**
+- We're testing if Series1's pattern at time T matches Series2's pattern at time T-500ns
+- In other words: "Does the event in Series1 happen 500ns before the same event in Series2?"
+
+**Visual alignment:**
+```
+Time (ns):    0   100  200  300  400  500  600  700  800  900 1000 1100 1200
+Series1:    [a0][a1][a2][a3][a4][a5][a6][a7][a8][a9][a10][a11][a12]
+Series2:                            [b0][b1][b2][b3][b4][b5][b6][b7][b8]
+                                     ↑
+                                   b0 (at 0ns) aligns with a5 (at 500ns)
+```
+
+**Extracted series for correlation:**
+```
+series1 = [a5, a6, a7, a8]  ← Series1 starting from 500ns
+series2 = [b0, b1, b2, b3]  ← Series2 starting from 0ns
+```
+
+**The 500ns time difference you mentioned:**
+- a5 occurs at time 500ns
+- b0 occurs at time 0ns  
+- **Time difference = 500ns**
+- This tests the hypothesis: "Series1 leads Series2 by 500ns"
+
+### Why This Matters:
+Cross-correlation finds the **time delay** between signals. The lag value in samples gets converted to real time using the sampling rate:
+- **Lag in time = (lag in samples) × (sample period)**
+- **500ns = 5 samples × 100ns/sample**
+
+This time relationship is what makes cross-correlation useful for measuring signal delays, propagation times, and synchronization!
+## Now check ->
 Lag = -10 samples (Series 2 leads by 10):
 Series1: [0][1][2][3][4][5][6][7][8][9][10][11][12]...
 Series2:           [0][1][2][3][4][5][6][7][8][9]...
