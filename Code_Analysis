@@ -494,3 +494,216 @@ Total: 62 × 16 + 8 = 992 + 8 = 1000 floats ✓
    - Better cache utilization
 
 4. **No reallocation needed**: The 64-byte alignment persists for the entire 4000-byte block - you don't need to realign every 64 bytes!
+
+Let me break down these critical lines that form the core of the lead-lag detection algorithm:
+
+## **Line-by-Line Explanation with Visualizations**
+
+### **1. Sample Size Determination**
+```cpp
+int n_samples = std::min(prices1.size(), prices2.size());
+```
+
+**Purpose:** Ensures we don't go out of bounds when comparing two series
+
+```
+Example:
+prices1: [100.1, 100.2, 100.3, 100.4, 100.5]  size = 5
+prices2: [99.9, 100.0, 100.1]                  size = 3
+         ↓
+n_samples = min(5, 3) = 3  ← Only compare first 3 elements
+
+Why? Correlation needs pairs of values:
+(prices1[0], prices2[0]) ✓
+(prices1[1], prices2[1]) ✓
+(prices1[2], prices2[2]) ✓
+(prices1[3], prices2[3]) ✗ prices2[3] doesn't exist!
+```
+
+### **2. Number of Lags Calculation**
+```cpp
+int num_lags = (2 * config.max_lag_ns / config.lag_step_ns) + 1;
+```
+
+**Purpose:** Calculates how many different lag values to test
+
+```
+Example: max_lag_ns = 1000, lag_step_ns = 100
+
+Range: -1000ns to +1000ns in steps of 100ns
+
+-1000  -900  -800  -700  -600  -500  -400  -300  -200  -100  0  +100  +200  +300  +400  +500  +600  +700  +800  +900  +1000
+  ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓   ↓   ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓
+ [0]   [1]   [2]   [3]   [4]   [5]   [6]   [7]   [8]   [9] [10] [11]  [12]  [13]  [14]  [15]  [16]  [17]  [18]  [19]  [20]
+
+Total range: 2 * 1000 = 2000ns
+Number of steps: 2000 / 100 = 20
+Plus center (0): 20 + 1 = 21 lags
+
+Formula: (2 * max_lag_ns / lag_step_ns) + 1 = (2 * 1000 / 100) + 1 = 21
+```
+
+### **3. Correlations Vector**
+```cpp
+std::vector<float> correlations(num_lags);
+```
+
+**Purpose:** Pre-allocates storage for correlation at each lag
+
+```
+correlations vector (21 elements for our example):
+┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
+│[0] │[1] │[2] │[3] │[4] │[5] │[6] │[7] │[8] │[9] │[10]│[11]│[12]│[13]│[14]│[15]│[16]│[17]│[18]│[19]│[20]│
+└────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┘
+  ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓    ↓
+-1000 -900 -800 -700 -600 -500 -400 -300 -200 -100   0  +100 +200 +300 +400 +500 +600 +700 +800 +900 +1000
+                                                      ↑
+                                                 No lag (baseline)
+```
+
+### **4. OpenMP Parallel Directive**
+```cpp
+#pragma omp parallel for schedule(dynamic)
+```
+
+**This is OpenMP (Open Multi-Processing) - breaks the loop across CPU cores:**
+
+```
+#pragma omp parallel for schedule(dynamic)
+   ↑       ↑         ↑       ↑        ↑
+   │       │         │       │        └── Dynamic scheduling
+   │       │         │       └────────── For loop parallelization
+   │       │         └────────────────── Creates thread team
+   │       └──────────────────────────── OpenMP library
+   └──────────────────────────────────── Compiler directive
+
+What it does:
+┌─────────────────────────────────────────────────────┐
+│            Single Thread (WITHOUT OpenMP)           │
+├─────────────────────────────────────────────────────┤
+│ Core 0: lag[0]→lag[1]→lag[2]→...→lag[20]           │
+│ Time: ████████████████████████████████████ (21 units)│
+└─────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────┐
+│           Multi-Thread (WITH OpenMP - 4 cores)      │
+├─────────────────────────────────────────────────────┤
+│ Core 0: lag[0]  lag[4]  lag[8]  lag[12] lag[16]    │
+│ Core 1: lag[1]  lag[5]  lag[9]  lag[13] lag[17]    │
+│ Core 2: lag[2]  lag[6]  lag[10] lag[14] lag[18]    │
+│ Core 3: lag[3]  lag[7]  lag[11] lag[15] lag[19]    │
+│ Time: ██████ (6 units) - 3.5x faster!               │
+└─────────────────────────────────────────────────────┘
+
+schedule(dynamic) means:
+- static:  Each thread gets fixed chunk (0-5, 6-11, 12-17, 18-20)
+- dynamic: Threads grab next available task when ready (better load balancing)
+```
+
+### **5. The Parallel Loop**
+```cpp
+for (int lag_idx = 0; lag_idx < num_lags; lag_idx++) {
+    int lag_ns = -config.max_lag_ns + lag_idx * config.lag_step_ns;
+    int lag_samples = lag_ns / 100;
+```
+
+**Converting lag index to actual lag values:**
+
+```
+lag_idx = 0:   lag_ns = -1000 + 0*100 = -1000ns   lag_samples = -1000/100 = -10
+lag_idx = 1:   lag_ns = -1000 + 1*100 = -900ns    lag_samples = -900/100 = -9
+lag_idx = 2:   lag_ns = -1000 + 2*100 = -800ns    lag_samples = -800/100 = -8
+...
+lag_idx = 10:  lag_ns = -1000 + 10*100 = 0ns      lag_samples = 0/100 = 0
+...
+lag_idx = 20:  lag_ns = -1000 + 20*100 = +1000ns  lag_samples = 1000/100 = +10
+
+Visual of what each lag means:
+Lag = -10 samples (Series 2 leads by 10):
+Series1: [0][1][2][3][4][5][6][7][8][9][10][11][12]...
+Series2:           [0][1][2][3][4][5][6][7][8][9]...
+                    ↑ Aligned with ↑
+
+Lag = +10 samples (Series 1 leads by 10):
+Series1:           [0][1][2][3][4][5][6][7][8][9]...
+Series2: [0][1][2][3][4][5][6][7][8][9][10][11][12]...
+                    ↑ Aligned with ↑
+```
+
+### **6. Computing and Storing Correlations**
+```cpp
+float correlation = computeCorrelationAtLagSIMD(prices1.data(), prices2.data(), 
+                                               n_samples, lag_samples);
+correlations[lag_idx] = correlation;
+```
+
+**Each thread computes correlation for its assigned lag:**
+
+```
+Thread Assignment (dynamic scheduling):
+Thread 0 computes lag_idx=0  → correlations[0] = 0.45
+Thread 1 computes lag_idx=1  → correlations[1] = 0.52
+Thread 2 computes lag_idx=2  → correlations[2] = 0.61
+Thread 3 computes lag_idx=3  → correlations[3] = 0.73
+Thread 0 finishes, grabs lag_idx=4 → correlations[4] = 0.85
+Thread 1 finishes, grabs lag_idx=5 → correlations[5] = 0.92
+...
+
+Result array after parallel execution:
+correlations = [0.45, 0.52, 0.61, 0.73, 0.85, 0.92, 0.97, 0.99, 0.98, 0.95, 0.88, ...]
+```
+
+### **7. Finding Maximum Correlation**
+```cpp
+auto max_it = std::max_element(correlations.begin(), correlations.end());
+int max_idx = std::distance(correlations.begin(), max_it);
+int optimal_lag_ns = -config.max_lag_ns + max_idx * config.lag_step_ns;
+```
+
+**Finding which lag has the highest correlation:**
+
+```
+Step 1: Find maximum element
+correlations = [0.45, 0.52, 0.61, 0.73, 0.85, 0.92, 0.97, 0.99, 0.98, 0.95, 0.88, ...]
+                                                            ↑
+                                                        max_it points here
+                                                        Value: 0.99
+Step 2: Get index
+max_idx = distance(begin, max_it) = 7
+
+Step 3: Convert index back to nanoseconds
+optimal_lag_ns = -1000 + 7*100 = -1000 + 700 = -300ns
+
+Interpretation:
+Maximum correlation of 0.99 occurs at lag = -300ns
+This means Series 2 leads Series 1 by 300 nanoseconds!
+```
+
+### **Complete Flow Visualization**
+
+```
+Input: Two price series, max_lag=1000ns, step=100ns
+                    ↓
+      Calculate 21 different lags to test
+                    ↓
+    ┌───────────────────────────────────┐
+    │     OpenMP: Split across cores     │
+    ├────────┬────────┬────────┬────────┤
+    │ Core 0 │ Core 1 │ Core 2 │ Core 3 │
+    │  SIMD  │  SIMD  │  SIMD  │  SIMD  │
+    └────────┴────────┴────────┴────────┘
+                    ↓
+    Correlations: [0.45, 0.52, ..., 0.99, ..., 0.88]
+                    ↓
+            Find maximum: 0.99 at index 7
+                    ↓
+            Optimal lag: -300 nanoseconds
+                    ↓
+    Result: Series 2 leads Series 1 by 300ns
+```
+
+The beauty of this approach:
+1. **Parallel**: Multiple cores test different lags simultaneously
+2. **SIMD**: Each core uses vector instructions for fast correlation
+3. **Comprehensive**: Tests all possible lags in the range
+4. **Precise**: Finds the exact lag with maximum correlation
