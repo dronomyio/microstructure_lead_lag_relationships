@@ -183,18 +183,19 @@ Transaction costs exceed the spread
 The relationship breaks down frequently
 
 ### Interpretation
-
+```
 - IR < 0.5: Too noisy, likely unprofitable after costs
 - IR 0.5-1.0: Potentially profitable with good execution
 - IR > 1.0: Strong, consistent signal worth trading
 - IR > 2.0: Exceptional opportunity (rare)
-
+```
 ### Example Scenario
 python
 #### Two detected relationships:
+```
 Relationship A: correlation=0.8, occurs 90% of time → IR=1.8 ✓
 Relationship B: correlation=0.9, occurs 20% of time → IR=0.4 ✗
-
+```
 ## 4. Sharpe Ratio
 #### Intuition
 Sharpe extends IR by considering the risk-free rate and annualizing returns. It answers: "Is this strategy worth the capital allocation?"
@@ -202,37 +203,39 @@ Sharpe extends IR by considering the risk-free rate and annualizing returns. It 
 Sharpe = (Return - Risk_Free_Rate) / Volatility
        = Risk-Adjusted Return (annualized)
 Key Differences from IR
-```
+
 Annualized: Scales with √252 (trading days)
 Risk-free benchmark: Compares to T-bills (~5% currently)
 Capital efficiency: Helps size positions
-
+```
 #### Trading Decisions
-
+```
 Sharpe < 0.5: Not worth the capital
 Sharpe 0.5-1.0: Acceptable for diversification
 Sharpe 1.0-2.0: Good strategy, allocate capital
 Sharpe > 2.0: Excellent, maximize position (within risk limits)
-
+```
 ### Putting It All Together: A Real Example
+```
 Imagine detecting this pattern:
 python# AAPL quotes arriving at different exchanges
 NASDAQ (14:30:00.000000000): Bid $150.00, Ask $150.01
 IEX    (14:30:00.000000750): Bid $149.99, Ask $150.00  # 750ns delay
 NYSE   (14:30:00.000001200): Bid $149.99, Ask $150.00  # 1200ns delay
-
+```
 ### Analysis results:
+```
 NASDAQ→IEX:  Lag=750ns,  Correlation=0.92, IR=1.4, Sharpe=1.8
 NASDAQ→NYSE: Lag=1200ns, Correlation=0.88, IR=0.9, Sharpe=1.1
-
+```
 #### Trading Strategy
-
+```
 Monitor NASDAQ (the leader)
 When NASDAQ bid rises to $150.01:
 Immediately buy on IEX at $150.00 (750ns window)
 Sell when IEX catches up to $150.01
 Profit: $0.01 per share, minus costs
-
+```
 
 
 # Graphical Intuition of Lead-Lag Correlation Analysis
