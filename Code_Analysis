@@ -1,0 +1,8 @@
+```
+void* ptr = nullptr; 
+if (posix_memalign(&ptr, alignment, n * sizeof(T)) != 0) 
+{ 
+  throw std::bad_alloc(); 
+} 
+return static_cast<T*>(ptr);
+```
