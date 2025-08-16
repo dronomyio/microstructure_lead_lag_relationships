@@ -200,6 +200,7 @@ Lag = +1000ns:
        Alignment degrading → Correlation = 0.6
 
 CORRELATION vs LAG GRAPH:
+
     1.0 │      ╱╲
         │     ╱  ╲ ← Peak at +500ns
     0.8 │    ╱    ╲   (A leads B)
@@ -210,7 +211,9 @@ Corr    │   ╱      ╲
         │              ╲
     0.2 │_______________╲_____
         -1000  -500  0  +500  +1000
+        
                    Lag (ns)
+
 
   ## 4. The SIMD Parallel Computation
 
@@ -221,42 +224,58 @@ Traditional (Sequential):
 
 Lag₁: ●────────────────> Corr₁
 
+
 Lag₂:   ●────────────────> Corr₂
 
+
 Lag₃:     ●────────────────> Corr₃
+
 
 ...
 
 Time: ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 
+
 AVX2 SIMD (8 Parallel):
+
 ┌─────────────────────┐
 │ Lag₁ Lag₂ ... Lag₈  │ ──> [Corr₁|Corr₂|...|Corr₈]
 └─────────────────────┘
+
 All 8 computed simultaneously!
+
 
 Time: ▓▓▓ (8x faster!)
 
 With 48 Cores + OpenMP:
 
+
 Core 0:  [Lag₁-₈]   ──> [Corr₁-₈]
 
+
 Core 1:  [Lag₉-₁₆]  ──> [Corr₉-₁₆]
+
 
 ...
 
 Core 47: [Lag₃₇₇-₃₈₄] ──> [Corr₃₇₇-₃₈₄]
 
+
 Time: ▓ (384x faster!)
+
 
 ## 5. Information Ratio - Signal Quality Visualization
 
+
 INFORMATION RATIO INTUITION:
+
 
 ════════════════════════════
 
 
+
 High IR (Good Signal):          Low IR (Noisy Signal):
+
 Correlations across lags:       Correlations across lags:
     │  ●●●                          │    ●  ●
 0.9 │ ●   ●                      0.9│  ●  ●●  ●
@@ -265,9 +284,13 @@ Correlations across lags:       Correlations across lags:
     │                               │  ●  ●  ●●
 0.7 │                            0.7│ ●  ●●  ●  ●
     └────────────                   └────────────
+    
     Mean: 0.85                      Mean: 0.80
+    
     StdDev: 0.05 (tight!)          StdDev: 0.15 (spread!)
+    
     IR = 0.85/0.05 = 17.0          IR = 0.80/0.15 = 5.3
+    
     
     RELIABLE for trading!          RISKY for trading!
 
