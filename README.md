@@ -218,9 +218,12 @@ Sharpe > 2.0: Excellent, maximize position (within risk limits)
 ### Putting It All Together: A Real Example
 ```
 Imagine detecting this pattern:
-python# AAPL quotes arriving at different exchanges
+python
+# AAPL quotes arriving at different exchanges
 NASDAQ (14:30:00.000000000): Bid $150.00, Ask $150.01
+
 IEX    (14:30:00.000000750): Bid $149.99, Ask $150.00  # 750ns delay
+
 NYSE   (14:30:00.000001200): Bid $149.99, Ask $150.00  # 1200ns delay
 ```
 ### Analysis results:
