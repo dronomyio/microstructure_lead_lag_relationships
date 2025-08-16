@@ -108,6 +108,8 @@ This system can process millions of quotes per second and detect lead-lag relati
 
 ## ===============INTUITION===============================
 
+In modern markets, the same asset trades on multiple exchanges simultaneously (e.g., AAPL on NASDAQ, NYSE, BATS). Due to technological differences, geographic distances, and market microstructure, price discovery often happens first on one exchange and then propagates to others with a delay measured in microseconds or nanoseconds.
+
 # Graphical Intuition of Lead-Lag Correlation Analysis
 ## 1. What We're Actually Measuring - Lead-Lag Relationship
 PRICE SERIES OVER TIME:
