@@ -756,3 +756,16 @@ Because the *biggest* peak might:
 
 If you want, I can turn this into a small **GPU notebook** (CuPy) that: (a) estimates $\tau^\*$, (b) builds the predictive rule, and (c) reports IR/Sharpe with a cost model using your own nanosecond A/B streams.
 
+# Examples
+Here you go—a tiny visual demo:
+
+* First chart: two series where **B lags A by \~700µs** (you can see B “copy” A a hair later).
+* Second chart: **cross-correlation vs. lag**; the peak lands exactly at **+700µs**, confirming “A leads B.”
+* Third chart: a toy **cumulative P\&L** from a simple rule (trade B on big moves in A, exit after the estimated lag). I also print the estimated lag, number of trades, and per-trade IR/Sharpe-like numbers right under the second plot.
+
+If you want, I can tweak:
+
+* the true lag,
+* sampling period (e.g., 10µs),
+* noise level (to show how IR collapses with microstructure noise), or
+* swap in an FFT-based xcorr version that scales to 1M+ ticks.
