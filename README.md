@@ -12,12 +12,12 @@ docker-compose up --build
 ====
 
 Direct Compilation:
-
-bashmkdir build && cd build
+```
+bash$ mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j$(nproc)
 ./lead_lag_analyzer --config ../config/config.json
-
+```
 
 ===================================================
 Access Dashboard:
