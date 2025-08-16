@@ -780,3 +780,141 @@ If you want, I can tweak:
 * sampling period (e.g., 10µs),
 * noise level (to show how IR collapses with microstructure noise), or
 * swap in an FFT-based xcorr version that scales to 1M+ ticks.
+
+# With **Polygon’s stock Quotes and Trades flat files**, you can see *exactly* where lead–lag is introduced because each record carries multiple clocks:
+
+* **participant/exchange timestamp (`participant_timestamp`)** – when the event was born at the exchange’s matching engine/gateway. ([Polygon][1])
+* **SIP timestamp (`sip_timestamp`)** – when the **SIP** (CTA for Tapes A/B, UTP for Tape C) received and disseminated that event. ([Polygon][1])
+* **TRF timestamp (`trf_timestamp`)** – for off-exchange prints, when the FINRA Trade Reporting Facility received the trade. ([Polygon][2])
+* Plus **exchange ID / tape / sequence\_number / condition codes** for filtering and ordering. ([Polygon][1])
+
+Below is where the lag actually comes from in your data—and how to measure each piece.
+
+---
+
+## 1) Exchange → SIP latency (feed/aggregation delay)
+
+**Where it’s generated:** network + processing time for an exchange’s message to reach the SIP and be consolidated.
+**How you see it:**
+
+$$
+\Delta_{\text{ex→SIP}} = \texttt{sip\_timestamp} - \texttt{participant\_timestamp} \quad (\text{per message})
+$$
+
+Group by **exchange id** and **tape** to get distributions; CTA (A/B) is operated from **Mahwah, NJ** and UTP (C) from **Carteret, NJ**, so geography alone creates systematic microsecond differences. ([Nasdaq][3], [Traders Magazine][4])
+
+**Use cases**
+
+* Build histograms of $\Delta_{\text{ex→SIP}}$ by venue to quantify typical and tail latencies.
+* Monitor drift: if an exchange’s $\Delta$ shifts, your execution windows change.
+
+---
+
+## 2) Inter-venue propagation (A leads B)
+
+**Where it’s generated:** a price discovery event on one venue is echoed on others after routing/response delays (smart order routing, copy-cat liquidity, market makers repricing).
+**How you see it:** work **entirely in participant time** to avoid SIP jitter:
+
+1. From Quotes flat files, create per-exchange signals (e.g., mid-price delta, best bid change).
+2. Cross-correlate Exchange A vs Exchange B over lags $\tau$. Peak at $\tau^\!>\!0$ ⇒ **A leads B by $\tau$**.
+   This isolates *true* venue-to-venue delays using the **at-exchange clock** Polygon provides. (Participant vs SIP clocks and their role in TAQ are discussed in microstructure literature.) ([Polygon][1], [The Microstructure Exchange][5])
+
+**Tip:** also check the **width** and **stability** of the correlation peak by time-of-day; open/close behave differently.
+
+---
+
+## 3) Trade → Quote reaction (price update after prints)
+
+**Where it’s generated:** after a trade consumes liquidity, makers/venues update quotes.
+**How you see it:**
+
+* Pair **Trades** and **Quotes** by *venue* (same exchange id) and use **participant timestamps**:
+
+$$
+\tau_{\text{T→Q}} = t^{\text{quote}}_{\text{participant}} - t^{\text{trade}}_{\text{participant}}
+$$
+
+* Alternatively, relate **Trades (participant)** to **NBBO changes (SIP)** if you want the consolidated view.
+  Filter on **regular trade/quote condition codes** to avoid specials. ([Polygon][6])
+
+---
+
+## 4) Off-exchange (TRF) path
+
+**Where it’s generated:** dark/wholesale trades are reported to **FINRA TRF** first, then make their way into SIP views.
+**How you see it:**
+
+$$
+\Delta_{\text{TRF path}} = \texttt{trf\_timestamp} - \texttt{participant\_timestamp}
+$$
+
+…and compare to the SIP time for when that print appears (or when NBBO responds). TRF has its **own** path and can exhibit different lags vs lit venues. ([Polygon][2])
+
+---
+
+## 5) SIP location asymmetry (Tape A/B vs C)
+
+**Where it’s generated:** the two equity SIPs are in **different data centers** (CTA in **Mahwah**, UTP in **Carteret**). Messages may traverse Mahwah↔Carteret↔Secaucus, adding geographic micro-latency and asymmetries by tape—visible in your $\Delta_{\text{ex→SIP}}$ distributions. ([Nasdaq][3], [Federal Register][7])
+
+---
+
+## 6) “Not in your timestamps” (what you can ignore)
+
+Polygon’s flat files don’t record “Polygon-received” times—only **participant/SIP/TRF**. Your **download/upload** steps, CSV decompression, etc., don’t affect those event times, so they won’t pollute your lead–lag estimates.
+
+---
+
+## Concrete “how-to” with your files
+
+**A) Venue → SIP latency by exchange**
+
+* Use **Quotes** and **Trades** CSVs for the day.
+* Compute `sip_timestamp - participant_timestamp` per row.
+* Aggregate by `exchange_id` and `tape` → median / p95 / p99 plots.
+* Expect Tape-specific patterns (A/B vs C). ([Polygon][1], [Nasdaq][3])
+
+**B) Venue-to-venue lead–lag**
+
+* From **Quotes**, build per-exchange mid-price change series keyed by **participant time**.
+* Cross-correlate A vs B over $\pm$ a few ms; peak $\Rightarrow$ leader & delay.
+
+**C) Trade → NBBO response**
+
+* From **Trades** (participant time) and **NBBO** (SIP; via WS/REST if you need NBBO), cross-correlate trade signs with NBBO mid changes. ([Polygon][8])
+
+**D) Cleanliness**
+
+* Sort by **sequence\_number** within ticker/venue as a tie-breaker.
+* Drop/flag unusual **condition codes** (auction, odd-lot, derivatively priced). ([Polygon][6])
+
+---
+
+## Quick mapping: “what lag am I measuring?”
+
+| Measurement you take                                  | Field(s) used                            | What it captures                                            |
+| ----------------------------------------------------- | ---------------------------------------- | ----------------------------------------------------------- |
+| `sip_timestamp − participant_timestamp`               | both                                     | **Exchange→SIP** transmission/processing delay              |
+| X-corr of Exchange A vs Exchange B (participant time) | participant timestamps only              | **True venue-to-venue propagation** (information discovery) |
+| Trade→Quote delay on same venue                       | both participant timestamps              | **Post-trade quote reaction** (inventory/queue updates)     |
+| TRF trade reporting delay                             | `trf_timestamp`, `participant_timestamp` | **Off-exchange reporting path**                             |
+| NBBO update timing vs venue                           | NBBO SIP vs venue participant            | **SIP consolidation latency** + **venue→SIP path**          |
+
+---
+
+### Why this matters for your strategy
+
+* Use **participant time** to discover *economic* lead–lags (who truly leads whom).
+* Use **SIP time** to understand *what a SIP-only consumer sees* (and to size latency-arb windows). SIP latency differences of \~1 ms are documented in the literature and vary by path/location. ([UC Berkeley Law][9])
+
+If you want, I can whip up a small script that ingests one day of Polygon **Quotes** + **Trades**, produces (1) venue→SIP latency histograms and (2) a matrix of venue-to-venue lead–lags using participant time, then (3) overlays trade→quote reaction times—ready to swap in your tickers.
+
+[1]: https://polygon.io/docs/rest/stocks/trades-quotes/quotes?utm_source=chatgpt.com "Quotes | Stocks REST API"
+[2]: https://polygon.io/knowledge-base/article/which-timestamps-are-returned-for-polygons-stock-trades-and-nbbo-quotes?utm_source=chatgpt.com "Which timestamps are returned for Polygon's stock trades ..."
+[3]: https://www.nasdaq.com/articles/time-is-relativity-what-physics-has-to-say-about-market-infrastructure-2020-04-09?utm_source=chatgpt.com "Time is Relativity: What Physics Has to Say About Market ..."
+[4]: https://www.tradersmagazine.com/tech-tuesday/tech-tuesday-how-trades-speed-between-venues/?utm_source=chatgpt.com "TECH TUESDAY: How Trades Speed Between Venues"
+[5]: https://microstructure.exchange/slides/TAQ_Participant_Timestamp_Sander_Schwenk-Nebbe.pdf?utm_source=chatgpt.com "The Participant Timestamp: Get The Most Out Of TAQ Data*"
+[6]: https://polygon.io/docs/rest/stocks/market-operations/condition-codes?utm_source=chatgpt.com "Condition Codes | Stocks REST API"
+[7]: https://www.federalregister.gov/documents/2020/01/14/2020-00360/notice-of-proposed-order-directing-the-exchanges-and-the-financial-industry-regulatory-authority-to?utm_source=chatgpt.com "Notice of Proposed Order Directing the Exchanges and ..."
+[8]: https://polygon.io/docs/websocket/stocks/quotes?utm_source=chatgpt.com "Quotes | Stocks WebSocket"
+[9]: https://www.law.berkeley.edu/wp-content/uploads/2019/10/bartlett_mccrary_latency2017.pdf?utm_source=chatgpt.com "[PDF] How Rigged Are Stock Markets? Evidence from Microsecond ..."
+
