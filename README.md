@@ -760,7 +760,11 @@ If you want, I can turn this into a small **GPU notebook** (CuPy) that: (a) esti
 Here you go—a tiny visual demo:
 <img width="1697" height="1101" alt="output-3" src="https://github.com/user-attachments/assets/c3e9af91-318c-488f-b62a-628a94518a22" />
 
-1. 
+
+<img width="1718" height="1139" alt="output-4" src="https://github.com/user-attachments/assets/5add97eb-210a-4532-88ee-d8da3903e610" />
+
+<img width="1693" height="1101" alt="output-5" src="https://github.com/user-attachments/assets/b2564833-d155-4daa-a3e6-7da51baa043b" />
+
 
 * First chart: two series where **B lags A by \~700µs** (you can see B “copy” A a hair later).
 * Second chart: **cross-correlation vs. lag**; the peak lands exactly at **+700µs**, confirming “A leads B.”
