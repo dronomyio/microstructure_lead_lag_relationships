@@ -110,6 +110,15 @@ This system can process millions of quotes per second and detect lead-lag relati
 
 In modern markets, the same asset trades on multiple exchanges simultaneously (e.g., AAPL on NASDAQ, NYSE, BATS). Due to technological differences, geographic distances, and market microstructure, price discovery often happens first on one exchange and then propagates to others with a delay measured in microseconds or nanoseconds.
 
+### The Arbitrage Opportunity
+If you can detect that Exchange A consistently leads Exchange B by 500 nanoseconds, you can:
+
+1. See a price move on Exchange A
+2. Immediately trade on Exchange B before its price adjusts
+3. Capture the spread as risk-free profit
+
+
+
 # Graphical Intuition of Lead-Lag Correlation Analysis
 ## 1. What We're Actually Measuring - Lead-Lag Relationship
 PRICE SERIES OVER TIME:
