@@ -117,7 +117,58 @@ If you can detect that Exchange A consistently leads Exchange B by 500 nanosecon
 2. Immediately trade on Exchange B before its price adjusts
 3. Capture the spread as risk-free profit
 
+### 1. Cross-Correlation at Multiple Lags
+Intuition
+```
+Cross-correlation measures how similar two signals are when one is shifted in time relative to the other.
+Exchange A: --[Price Move]------------------------->
+Exchange B: -----------[Same Price Move]------------>
+              <---lag--->
+```
+### Mathematical Insight
+```
+# For each possible lag τ:
+correlation(τ) = Σ(price_A[t] * price_B[t + τ]) / normalization
 
+# Peak correlation occurs at τ = true_lag
+```
+### Why Multiple Lags?
+
+We don't know the delay a priori
+Test lags from -1ms to +1ms in 100ns increments
+The lag with maximum correlation reveals the information propagation delay
+Positive lag: A leads B
+Negative lag: B leads A
+```
+Real-World Example
+Lag (ns)    Correlation
+-1000       0.12
+-500        0.31
+0           0.67
++500        0.94  <-- Peak! Exchange A leads by 500ns
++1000       0.45
+```
+### 2. FFT-Based Correlation
+Intuition
+Computing correlation at thousands of lags is computationally expensive (O(n²)). FFT transforms this into frequency domain where correlation becomes multiplication (O(n log n)).
+#### The Trick
+Time Domain:                     Frequency Domain:
+correlation = convolution   -->  multiplication
+O(n²) operations            -->  O(n log n) operations
+
+#### Process
+
+1. FFT both price series → frequency domain
+2. Multiply (conjugate of one with the other)
+3. Inverse FFT → all correlations at once
+
+#### Practical Impact
+
+For 1 million quotes with 10,000 lag tests:
+
+- Direct method: 10 billion operations
+- FFT method: ~20 million operations
+- 500x speedup enables real-time analysis
 
 # Graphical Intuition of Lead-Lag Correlation Analysis
 ## 1. What We're Actually Measuring - Lead-Lag Relationship
