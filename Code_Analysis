@@ -6,3 +6,256 @@ if (posix_memalign(&ptr, alignment, n * sizeof(T)) != 0)
 } 
 return static_cast<T*>(ptr);
 ```
+Let me visualize exactly how `posix_memalign` works step by step:
+
+## **posix_memalign() - Visual Step-by-Step**
+
+### **1. Initial State - Before posix_memalign**
+
+```
+STACK (Your Program):
+┌────────────────────────┐
+│  void* ptr = nullptr;  │
+│  ┌──────────┐          │
+│  │   ptr    │────→ NULL│
+│  └──────────┘          │
+└────────────────────────┘
+
+HEAP (System Memory):
+┌──────────────────────────────────────────────────────────┐
+│ ???  Random unallocated memory with random addresses  ???│
+└──────────────────────────────────────────────────────────┘
+```
+
+### **2. Calling posix_memalign(&ptr, alignment, n * sizeof(T))**
+
+```cpp
+posix_memalign(&ptr, 64, 16 * sizeof(float))
+               ↑     ↑    ↑
+               │     │    └── Size: 16 floats × 4 bytes = 64 bytes
+               │     └────── Alignment: 64-byte boundary
+               └──────────── Pass ADDRESS of ptr (not ptr itself!)
+```
+
+**What happens internally:**
+
+```
+Step 2a: System searches for suitable memory
+─────────────────────────────────────────────
+
+HEAP Memory Map:
+Address:    0x1000  0x1013  0x1037  0x1040  0x1055  0x1080  0x10C0
+            ↓       ↓       ↓       ↓       ↓       ↓       ↓
+┌───────────┬───────┬───────┬───────┬───────┬───────┬───────┬────
+│  Used     │ Free  │ Used  │ Free  │ Used  │ Free  │ Free  │...
+└───────────┴───────┴───────┴───────┴───────┴───────┴───────┴────
+            ↑               ↑               ↑       ↑
+            19 bytes        9 bytes         43 bytes│
+            (TOO SMALL)     (TOO SMALL)     (OK but not aligned!)
+                                                     ↑
+                                            0x1080 is aligned to 64!
+                                            (0x1080 = 4224 = 64 × 66)
+
+Step 2b: System finds aligned address
+──────────────────────────────────────
+
+Alignment Check:
+0x1040 ÷ 64 = 65.0    → ✓ Perfectly divisible! (0x1040 = 64 × 65)
+0x1055 ÷ 64 = 65.328  → ✗ Not aligned
+0x1080 ÷ 64 = 66.0    → ✓ Perfectly divisible! (0x1080 = 64 × 66)
+0x10C0 ÷ 64 = 67.0    → ✓ Perfectly divisible! (0x10C0 = 64 × 67)
+
+System picks 0x1080 (first available aligned address with enough space)
+```
+
+### **3. After Successful Allocation**
+
+```cpp
+if (posix_memalign(&ptr, 64, 64) != 0)  // Returns 0 on success
+```
+
+```
+STACK (Your Program):
+┌─────────────────────────────┐
+│  void* ptr;                 │
+│  ┌──────────┐               │
+│  │   ptr    │────→ 0x1080   │  ← ptr NOW POINTS to aligned memory!
+│  └──────────┘               │
+└─────────────────────────────┘
+         │
+         │ Points to
+         ↓
+HEAP (Allocated Memory):
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  0x1080                           0x10C0                     │
+│  ↓                                ↓                          │
+│  ┌────────────────────────────────┐                         │
+│  │    Your 64 bytes (aligned!)    │                         │
+│  │ ┌────┬────┬────┬────┬────┬────┐                         │
+│  │ │f[0]│f[1]│f[2]│...│f[14]│f[15]│                         │
+│  │ └────┴────┴────┴────┴────┴────┘                         │
+│  └────────────────────────────────┘                         │
+│  ↑                                ↑                          │
+│  Start: 0x1080                    End: 0x10C0               │
+│  (64-byte aligned!)               (Next boundary)           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### **4. The & (Address-of) Operator is KEY!**
+
+```cpp
+posix_memalign(&ptr, ...)  // Pass ADDRESS of ptr, not ptr itself!
+               ↑
+               This is crucial!
+```
+
+**Why pass &ptr instead of ptr?**
+
+```
+WITHOUT & (WRONG - Won't compile):
+───────────────────────────────────
+posix_memalign(ptr, 64, 64)
+               ↑
+               Passes NULL (the value of ptr)
+               Function can't modify ptr!
+
+┌─────────────┐        ┌─────────────────┐
+│ Your Code   │        │ posix_memalign  │
+│ ptr = NULL  │───────→│ receives NULL   │
+│             │        │ can't change ptr│
+└─────────────┘        └─────────────────┘
+
+
+WITH & (CORRECT):
+─────────────────
+posix_memalign(&ptr, 64, 64)
+               ↑
+               Passes the ADDRESS where ptr lives
+               Function CAN modify ptr!
+
+┌─────────────┐        ┌──────────────────────┐
+│ Your Code   │        │ posix_memalign       │
+│ ┌─────┐    │        │                      │
+│ │ ptr │    │←───────│ Writes new address  │
+│ └─────┘    │        │ directly to ptr!     │
+│ at 0x7fff  │        │ *(&ptr) = 0x1080     │
+└─────────────┘        └──────────────────────┘
+```
+
+### **5. Error Handling**
+
+```cpp
+if (posix_memalign(&ptr, alignment, size) != 0) {
+    throw std::bad_alloc();
+}
+```
+
+```
+SUCCESS CASE (returns 0):
+─────────────────────────
+┌─────────────────┐
+│ posix_memalign  │
+│                 │
+│ ✓ Found memory  │───→ Returns: 0
+│ ✓ Aligned it    │     ptr = 0x1080 (valid address)
+│ ✓ Updated ptr   │
+└─────────────────┘
+
+FAILURE CASE (returns non-zero):
+─────────────────────────────────
+┌─────────────────┐
+│ posix_memalign  │
+│                 │
+│ ✗ Out of memory │───→ Returns: ENOMEM (12)
+│   or            │     ptr = still nullptr!
+│ ✗ Bad alignment │───→ Returns: EINVAL (22)
+└─────────────────┘
+                    ↓
+            throw std::bad_alloc()
+```
+
+### **6. The static_cast<T*>(ptr)**
+
+```cpp
+return static_cast<T*>(ptr);
+```
+
+```
+BEFORE CAST:                    AFTER CAST:
+────────────                    ───────────
+ptr is void*                    Returns T* (e.g., float*)
+(Generic pointer)                (Typed pointer)
+
+┌──────────┐                    ┌──────────────┐
+│   void*  │                    │    float*    │
+│  0x1080  │ ──────cast────→    │    0x1080    │
+│          │                    │ Can do ptr[i]│
+└──────────┘                    └──────────────┘
+    ↑                                  ↑
+Can't do arithmetic              Can do pointer arithmetic
+Can't dereference                Can dereference as float
+```
+
+### **7. Complete Memory Layout Example**
+
+```
+Let's allocate 16 floats with 64-byte alignment:
+
+CALL: aligned_alloc<float>(16, 64)
+
+1. Initial:           ptr = nullptr → [ NULL ]
+
+2. Call posix_memalign(&ptr, 64, 64):
+   
+   System Memory Search:
+   ┌────────────────────────────────────────────────────┐
+   │0x1000│0x1020│0x1040│0x1060│0x1080│0x10A0│0x10C0│   │
+   │ Used │ Used │ Free │ Free │ Free │ Free │ Free │   │
+   └────────────────────────────────────────────────────┘
+           ↑       ↑       ↑       ↑       ↑       ↑
+          Not    0x1040  Not    0x1080  Not    0x10C0
+         Aligned  Good!  Aligned  Good! Aligned  Good!
+   
+   Picks 0x1040 (first aligned free block)
+
+3. After allocation:  ptr → [ 0x1040 ]
+   
+   Memory at 0x1040:
+   ┌─────────────────────────────────────────────────┐
+   │Byte 0-3 │Byte 4-7 │Byte 8-11│...│Byte 60-63    │
+   ├─────────┼─────────┼─────────┼───┼──────────────┤
+   │ float[0]│ float[1]│ float[2]│...│ float[15]    │
+   └─────────────────────────────────────────────────┘
+   ↑                                                 ↑
+   0x1040 (Aligned!)                                0x1080
+
+4. Return static_cast<float*>(ptr):
+   Returns: 0x1040 as float* type
+
+5. Usage:
+   float* data = aligned_alloc<float>(16, 64);
+   __m512 vec = _mm512_load_ps(data);  // Aligned load - FAST!
+```
+
+### **Key Points Visualized**
+
+```
+posix_memalign MODIFIES ptr through its address:
+
+     Your Variable              posix_memalign Function
+    ┌────────────┐             ┌─────────────────────┐
+    │    ptr     │←────────────│ Writes here using   │
+    │  nullptr   │             │ the address &ptr    │
+    └────────────┘             │                     │
+     Address: 0x7fff1234       │ *(&ptr) = 0x1040    │
+                               └─────────────────────┘
+                                         ↓
+    After call:                   Allocated Memory
+    ┌────────────┐               ┌─────────────┐
+    │    ptr     │──────────────→│  64 bytes   │
+    │  0x1040    │               │  (aligned)  │
+    └────────────┘               └─────────────┘
+```
+
+This is why `posix_memalign` needs the ADDRESS of your pointer (`&ptr`) - so it can modify what ptr points to!
