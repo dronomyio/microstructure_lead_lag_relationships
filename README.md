@@ -112,7 +112,7 @@ This system can process millions of quotes per second and detect lead-lag relati
 ## 1. What We're Actually Measuring - Lead-Lag Relationship
 PRICE SERIES OVER TIME:
 ════════════════════════
-
+```
 No Lag (Correlation = 0.3):
 Exchange A: ──╱╲──╱╲────╱╲──
 Exchange B: ────╱╲──╱╲──╱───
@@ -123,6 +123,7 @@ Exchange A: ──╱╲──╱╲────╱╲──╱╲──
 Exchange B:    ──╱╲──╱╲────╱╲──╱╲
             ↑────────────────────↑
             B follows A perfectly with 500ns delay!
+```
 ## 2. Correlation Calculation - Visual Intuition
 
 PEARSON CORRELATION FORMULA VISUALLY:
