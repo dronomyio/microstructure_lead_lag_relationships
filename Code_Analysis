@@ -1,10 +1,14 @@
 ```
-void* ptr = nullptr; 
-if (posix_memalign(&ptr, alignment, n * sizeof(T)) != 0) 
-{ 
-  throw std::bad_alloc(); 
-} 
-return static_cast<T*>(ptr);
+// Aligned memory allocation for SIMD
+template<typename T>
+T* aligned_alloc(size_t n, size_t alignment = 64) {
+    void* ptr = nullptr; 
+    if (posix_memalign(&ptr, alignment, n * sizeof(T)) != 0) 
+    { 
+      throw std::bad_alloc(); 
+    } 
+    return static_cast<T*>(ptr);
+}
 ```
 Let me visualize exactly how `posix_memalign` works step by step:
 
